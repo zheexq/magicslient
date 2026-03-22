@@ -3,8 +3,8 @@ import type { ChatMessage, Participant, RoomSnapshot } from "@/types/chat";
 
 const ROOM_CODE_BYTES = 6;
 const MAX_PARTICIPANTS = 2;
-const MAX_MESSAGES = 12;
-const MAX_MESSAGE_BYTES = 96;
+const MAX_MESSAGES = 1;
+const MAX_MESSAGE_BYTES = 48;
 
 const PARTICIPANT_SLOT_BYTES = 32 + 1 + 8;
 const MESSAGE_SLOT_BYTES = 32 + 8 + 2 + 1 + MAX_MESSAGE_BYTES;

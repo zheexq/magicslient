@@ -6,7 +6,7 @@ import {
 } from "@solana/web3.js";
 
 export const ROOM_PROGRAM_SEED = "room";
-export const MAX_MESSAGE_BYTES = 96;
+export const MAX_MESSAGE_BYTES = 48;
 export const ROOM_CODE_BYTES = 6;
 export const MAGICBLOCK_UNDELEGATE_CALLBACK_DISCRIMINATOR = Uint8Array.from([
   196, 28, 41, 206, 48, 37, 51, 167,

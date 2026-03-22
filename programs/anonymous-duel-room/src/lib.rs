@@ -21,8 +21,8 @@ use thiserror::Error;
 const ROOM_PROGRAM_SEED: &[u8] = b"room";
 const ROOM_CODE_BYTES: usize = 6;
 const MAX_PARTICIPANTS: usize = 2;
-const MAX_MESSAGES: usize = 12;
-const MAX_MESSAGE_BYTES: usize = 96;
+const MAX_MESSAGES: usize = 1;
+const MAX_MESSAGE_BYTES: usize = 48;
 
 const ROOM_ACCOUNT_DISCRIMINATOR: u8 = 1;
 const UNDELEGATE_CALLBACK_DISCRIMINATOR: [u8; 8] = [196, 28, 41, 206, 48, 37, 51, 167];
