@@ -155,6 +155,15 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
+    dispatch_instruction(program_id, accounts, instruction_data)
+}
+
+#[inline(never)]
+fn dispatch_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
     if instruction_data.len() >= 8 {
         let mut discriminator = [0u8; 8];
         discriminator.copy_from_slice(&instruction_data[..8]);
@@ -181,6 +190,7 @@ pub fn process_instruction(
     }
 }
 
+#[inline(never)]
 fn process_create_room(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -257,6 +267,7 @@ fn process_create_room(
     Ok(())
 }
 
+#[inline(never)]
 fn process_join_room(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let participant = next_account_info(account_info_iter)?;
@@ -300,6 +311,7 @@ fn process_join_room(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramRe
     Ok(())
 }
 
+#[inline(never)]
 fn process_leave_room(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let participant = next_account_info(account_info_iter)?;
@@ -376,6 +388,7 @@ fn process_send_message(
     Ok(())
 }
 
+#[inline(never)]
 fn process_push_payment_event(
     _program_id: &Pubkey,
     _accounts: &[AccountInfo],
@@ -384,6 +397,7 @@ fn process_push_payment_event(
     Err(RoomError::PaymentEventDisabled.into())
 }
 
+#[inline(never)]
 fn process_close_room(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let authority = next_account_info(account_info_iter)?;
@@ -419,6 +433,7 @@ fn process_close_room(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramR
     Ok(())
 }
 
+#[inline(never)]
 fn process_delegate_room(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let payer = next_account_info(account_info_iter)?;
@@ -478,6 +493,7 @@ fn process_delegate_room(program_id: &Pubkey, accounts: &[AccountInfo]) -> Progr
     Ok(())
 }
 
+#[inline(never)]
 fn process_commit_room(accounts: &[AccountInfo]) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let payer = next_account_info(account_info_iter)?;
@@ -493,6 +509,7 @@ fn process_commit_room(accounts: &[AccountInfo]) -> ProgramResult {
     Ok(())
 }
 
+#[inline(never)]
 fn process_commit_and_undelegate_room(accounts: &[AccountInfo]) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let payer = next_account_info(account_info_iter)?;
@@ -508,6 +525,7 @@ fn process_commit_and_undelegate_room(accounts: &[AccountInfo]) -> ProgramResult
     Ok(())
 }
 
+#[inline(never)]
 fn process_undelegate_callback(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
