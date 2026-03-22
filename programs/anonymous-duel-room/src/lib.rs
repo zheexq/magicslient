@@ -470,7 +470,7 @@ fn process_delegate_room(program_id: &Pubkey, accounts: &[AccountInfo]) -> Progr
 
     let delegate_config = DelegateConfig {
         validator: Some(validator_pubkey),
-        commit_frequency_ms: Some(3_000),
+        commit_frequency_ms: 3_000,
         ..Default::default()
     };
 
@@ -489,7 +489,7 @@ fn process_commit_room(accounts: &[AccountInfo]) -> ProgramResult {
         return Err(ProgramError::MissingRequiredSignature);
     }
 
-    commit_accounts(payer, vec![room_account], magic_context, magic_program)?;
+    commit_accounts(payer, vec![room_account], magic_context, magic_program, None)?;
     Ok(())
 }
 
@@ -504,7 +504,7 @@ fn process_commit_and_undelegate_room(accounts: &[AccountInfo]) -> ProgramResult
         return Err(ProgramError::MissingRequiredSignature);
     }
 
-    commit_and_undelegate_accounts(payer, vec![room_account], magic_context, magic_program)?;
+    commit_and_undelegate_accounts(payer, vec![room_account], magic_context, magic_program, None)?;
     Ok(())
 }
 
@@ -527,7 +527,6 @@ fn process_undelegate_callback(
     ensure_initialized(&room_state)?;
 
     let pda_seed_values = decode_pda_seeds(payload, &room_state)?;
-    let pda_seed_refs: Vec<&[u8]> = pda_seed_values.iter().map(|seed| seed.as_slice()).collect();
 
     undelegate_account(
         room_account,
@@ -535,7 +534,7 @@ fn process_undelegate_callback(
         delegation_buffer,
         payer,
         system_program_account,
-        &pda_seed_refs,
+        pda_seed_values,
     )?;
 
     Ok(())
