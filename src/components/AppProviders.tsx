@@ -140,13 +140,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const handleAccountChanged = (nextPublicKey?: PublicKey | null) => {
+    const handleAccountChanged = (...args: unknown[]) => {
+      const nextPublicKey = args[0] as PublicKey | null | undefined;
       setPublicKey(nextPublicKey ?? null);
       if (!nextPublicKey) {
         setWalletKind(null);
       }
     };
-    const handleDisconnect = () => {
+    const handleDisconnect = (..._args: unknown[]) => {
       setPublicKey(null);
       setWalletKind(null);
     };
