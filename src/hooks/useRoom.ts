@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getRoomClient } from "@/lib/room-client";
 import type { PaymentEvent, RoomSnapshot } from "@/types/chat";
 
@@ -9,6 +9,7 @@ export function useRoom(code: string, wallet?: string | null) {
   const [transportMode, setTransportMode] = useState<"browser" | "magicblock">("browser");
   const [delegation, setDelegation] = useState<{ isDelegated: boolean; fqdn?: string | null } | null>(null);
   const [transportError, setTransportError] = useState<string>("");
+  const joinedRoomKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -45,22 +46,30 @@ export function useRoom(code: string, wallet?: string | null) {
 
   useEffect(() => {
     if (!wallet) {
+      joinedRoomKeyRef.current = null;
       return;
     }
 
+    const roomKey = `${code}:${wallet}`;
+    if (joinedRoomKeyRef.current === roomKey) {
+      return;
+    }
+
+    joinedRoomKeyRef.current = roomKey;
     let disposed = false;
 
     void (async () => {
       const client = await getRoomClient();
       setTransportMode(client.mode);
       try {
-        if (!room) {
-          await client.createRoom(code, wallet);
-        } else {
+        try {
           await client.joinRoom(code, wallet);
+        } catch {
+          await client.createRoom(code, wallet);
         }
       } catch (error) {
         if (!disposed) {
+          joinedRoomKeyRef.current = null;
           setTransportError(error instanceof Error ? error.message : "Failed to join room.");
         }
       }
@@ -73,7 +82,7 @@ export function useRoom(code: string, wallet?: string | null) {
         await client.leaveRoom(code, wallet);
       })();
     };
-  }, [code, room, wallet]);
+  }, [code, wallet]);
 
   return {
     delegation,
