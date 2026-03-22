@@ -47,18 +47,27 @@ jobs:
           solana balance
 
       - name: Build Program
+        id: build
         shell: bash
         working-directory: ${{ env.PROGRAM_DIR }}
         run: |
           cargo update -p blake3 --precise 1.5.5
           cargo-build-sbf
+          pwd
           ls -la target/deploy
+          PROGRAM_SO="$(find "$PWD" -path '*/target/deploy/anonymous_duel_room.so' | head -n 1)"
+          if [ -z "$PROGRAM_SO" ]; then
+            echo "anonymous_duel_room.so not found"
+            find "$PWD" -path '*/target/deploy/*' -maxdepth 4 -type f | sort
+            exit 1
+          fi
+          echo "program_so=$PROGRAM_SO" >> "$GITHUB_OUTPUT"
 
       - name: Deploy Program
         id: deploy
         shell: bash
         run: |
-          DEPLOY_OUTPUT="$(solana program deploy '${BUILD_ARTIFACT}' --output json)"
+          DEPLOY_OUTPUT="$(solana program deploy '${{ steps.build.outputs.program_so }}' --output json)"
           echo "$DEPLOY_OUTPUT"
           PROGRAM_ID="$(printf '%s' "$DEPLOY_OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin)['programId'])")"
           echo "program_id=$PROGRAM_ID" >> "$GITHUB_OUTPUT"
@@ -71,5 +80,5 @@ jobs:
             echo ""
             echo "- Program ID: \`${{ steps.deploy.outputs.program_id }}\`"
             echo "- RPC: \`https://api.devnet.solana.com\`"
-            echo "- Artifact: \`${BUILD_ARTIFACT}\`"
+            echo "- Artifact: \`${{ steps.build.outputs.program_so }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
