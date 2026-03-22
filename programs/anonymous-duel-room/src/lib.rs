@@ -1,3 +1,7 @@
+use ephemeral_rollups_sdk::{
+    cpi::{delegate_account, undelegate_account, DelegateAccounts, DelegateConfig},
+    ephem::{commit_accounts, commit_and_undelegate_accounts},
+};
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
     clock::Clock,
@@ -17,17 +21,16 @@ use thiserror::Error;
 const ROOM_PROGRAM_SEED: &[u8] = b"room";
 const ROOM_CODE_BYTES: usize = 6;
 const MAX_PARTICIPANTS: usize = 2;
-const MAX_MESSAGES: usize = 40;
-const MAX_MESSAGE_BYTES: usize = 160;
-const MAX_PAYMENT_EVENTS: usize = 20;
+const MAX_MESSAGES: usize = 12;
+const MAX_MESSAGE_BYTES: usize = 96;
 
 const ROOM_ACCOUNT_DISCRIMINATOR: u8 = 1;
+const UNDELEGATE_CALLBACK_DISCRIMINATOR: [u8; 8] = [196, 28, 41, 206, 48, 37, 51, 167];
+const DEFAULT_DEVNET_VALIDATOR: &str = "MUS3hc9TCw4cGC12vHNoYcCGzJG1txjgQLZWVoeNHNd";
 
 const STATUS_WAITING: u8 = 0;
 const STATUS_ACTIVE: u8 = 1;
 const STATUS_CLOSED: u8 = 2;
-
-const PAYMENT_STATUS_CONFIRMED: u8 = 1;
 
 const TAG_CREATE_ROOM: u8 = 0;
 const TAG_JOIN_ROOM: u8 = 1;
@@ -41,12 +44,10 @@ const TAG_COMMIT_AND_UNDELEGATE_ROOM: u8 = 8;
 
 const PARTICIPANT_SLOT_BYTES: usize = 32 + 1 + 8;
 const MESSAGE_SLOT_BYTES: usize = 32 + 8 + 2 + 1 + MAX_MESSAGE_BYTES;
-const PAYMENT_EVENT_SLOT_BYTES: usize = 32 + 32 + 8 + 8 + 1;
-const ROOM_HEADER_BYTES: usize = 1 + 1 + 1 + ROOM_CODE_BYTES + 32 + 1 + 4 + 2 + 1 + 8 + 8 + 8;
+const ROOM_HEADER_BYTES: usize = 1 + 1 + 1 + ROOM_CODE_BYTES + 32 + 1 + 4 + 2 + 8 + 8 + 8;
 const ROOM_ACCOUNT_BYTES: usize = ROOM_HEADER_BYTES
     + (PARTICIPANT_SLOT_BYTES * MAX_PARTICIPANTS)
-    + (MESSAGE_SLOT_BYTES * MAX_MESSAGES)
-    + (PAYMENT_EVENT_SLOT_BYTES * MAX_PAYMENT_EVENTS);
+    + (MESSAGE_SLOT_BYTES * MAX_MESSAGES);
 
 #[derive(Clone, Copy, Debug, Default)]
 struct ParticipantSlot {
@@ -76,15 +77,6 @@ impl Default for MessageSlot {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct PaymentEventSlot {
-    from: [u8; 32],
-    to: [u8; 32],
-    amount_lamports: u64,
-    created_at: i64,
-    status: u8,
-}
-
 #[derive(Clone, Debug)]
 struct RoomState {
     discriminator: u8,
@@ -95,13 +87,11 @@ struct RoomState {
     participant_count: u8,
     next_message_seq: u32,
     message_count: u16,
-    payment_count: u8,
     created_at: i64,
     updated_at: i64,
     last_active_at: i64,
     participants: [ParticipantSlot; MAX_PARTICIPANTS],
     messages: [MessageSlot; MAX_MESSAGES],
-    payments: [PaymentEventSlot; MAX_PAYMENT_EVENTS],
 }
 
 impl Default for RoomState {
@@ -115,13 +105,11 @@ impl Default for RoomState {
             participant_count: 0,
             next_message_seq: 0,
             message_count: 0,
-            payment_count: 0,
             created_at: 0,
             updated_at: 0,
             last_active_at: 0,
             participants: [ParticipantSlot::default(); MAX_PARTICIPANTS],
             messages: [MessageSlot::default(); MAX_MESSAGES],
-            payments: [PaymentEventSlot::default(); MAX_PAYMENT_EVENTS],
         }
     }
 }
@@ -152,8 +140,6 @@ enum RoomError {
     RoomStillActive,
     #[error("payment events must be derived from real transfers")]
     PaymentEventDisabled,
-    #[error("magicblock hooks are disabled in this deployable build")]
-    MagicBlockHooksDisabled,
 }
 
 impl From<RoomError> for ProgramError {
@@ -169,6 +155,14 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
+    if instruction_data.len() >= 8 {
+        let mut discriminator = [0u8; 8];
+        discriminator.copy_from_slice(&instruction_data[..8]);
+        if discriminator == UNDELEGATE_CALLBACK_DISCRIMINATOR {
+            return process_undelegate_callback(program_id, accounts, &instruction_data[8..]);
+        }
+    }
+
     let (&tag, payload) = instruction_data
         .split_first()
         .ok_or(RoomError::InvalidInstruction)?;
@@ -426,18 +420,125 @@ fn process_close_room(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramR
 }
 
 fn process_delegate_room(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-    let _ = (program_id, accounts);
-    Err(RoomError::MagicBlockHooksDisabled.into())
+    let account_info_iter = &mut accounts.iter();
+    let payer = next_account_info(account_info_iter)?;
+    let system_program_account = next_account_info(account_info_iter)?;
+    let room_account = next_account_info(account_info_iter)?;
+    let owner_program = next_account_info(account_info_iter)?;
+    let delegation_buffer = next_account_info(account_info_iter)?;
+    let delegation_record = next_account_info(account_info_iter)?;
+    let delegation_metadata = next_account_info(account_info_iter)?;
+    let delegation_program = next_account_info(account_info_iter)?;
+    let validator_account = next_account_info(account_info_iter).ok();
+
+    if !payer.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+
+    if room_account.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    if owner_program.key != program_id {
+        return Err(RoomError::Unauthorized.into());
+    }
+
+    let room_state = RoomState::unpack(&room_account.try_borrow_data()?)?;
+    ensure_initialized(&room_state)?;
+
+    let validator_pubkey = match validator_account {
+        Some(account) => *account.key,
+        None => DEFAULT_DEVNET_VALIDATOR
+            .parse::<Pubkey>()
+            .map_err(|_| ProgramError::InvalidArgument)?,
+    };
+
+    let room_code_seed = room_state.room_code;
+    let bump_seed = [room_state.bump];
+    let pda_seeds: &[&[u8]] = &[ROOM_PROGRAM_SEED, &room_code_seed, &bump_seed];
+
+    let delegate_accounts = DelegateAccounts {
+        payer,
+        pda: room_account,
+        owner_program,
+        buffer: delegation_buffer,
+        delegation_record,
+        delegation_metadata,
+        delegation_program,
+        system_program: system_program_account,
+    };
+
+    let delegate_config = DelegateConfig {
+        validator: Some(validator_pubkey),
+        commit_frequency_ms: Some(3_000),
+        ..Default::default()
+    };
+
+    delegate_account(delegate_accounts, pda_seeds, delegate_config)?;
+    Ok(())
 }
 
 fn process_commit_room(accounts: &[AccountInfo]) -> ProgramResult {
-    let _ = accounts;
-    Err(RoomError::MagicBlockHooksDisabled.into())
+    let account_info_iter = &mut accounts.iter();
+    let payer = next_account_info(account_info_iter)?;
+    let room_account = next_account_info(account_info_iter)?;
+    let magic_program = next_account_info(account_info_iter)?;
+    let magic_context = next_account_info(account_info_iter)?;
+
+    if !payer.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+
+    commit_accounts(payer, vec![room_account], magic_context, magic_program)?;
+    Ok(())
 }
 
 fn process_commit_and_undelegate_room(accounts: &[AccountInfo]) -> ProgramResult {
-    let _ = accounts;
-    Err(RoomError::MagicBlockHooksDisabled.into())
+    let account_info_iter = &mut accounts.iter();
+    let payer = next_account_info(account_info_iter)?;
+    let room_account = next_account_info(account_info_iter)?;
+    let magic_program = next_account_info(account_info_iter)?;
+    let magic_context = next_account_info(account_info_iter)?;
+
+    if !payer.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+
+    commit_and_undelegate_accounts(payer, vec![room_account], magic_context, magic_program)?;
+    Ok(())
+}
+
+fn process_undelegate_callback(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    payload: &[u8],
+) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let room_account = next_account_info(account_info_iter)?;
+    let delegation_buffer = next_account_info(account_info_iter)?;
+    let payer = next_account_info(account_info_iter)?;
+    let system_program_account = next_account_info(account_info_iter)?;
+
+    if room_account.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    let room_state = RoomState::unpack(&room_account.try_borrow_data()?)?;
+    ensure_initialized(&room_state)?;
+
+    let pda_seed_values = decode_pda_seeds(payload, &room_state)?;
+    let pda_seed_refs: Vec<&[u8]> = pda_seed_values.iter().map(|seed| seed.as_slice()).collect();
+
+    undelegate_account(
+        room_account,
+        program_id,
+        delegation_buffer,
+        payer,
+        system_program_account,
+        &pda_seed_refs,
+    )?;
+
+    Ok(())
 }
 
 fn ensure_initialized(room_state: &RoomState) -> ProgramResult {
@@ -465,6 +566,32 @@ fn copy_message_bytes(message_body: &[u8]) -> [u8; MAX_MESSAGE_BYTES] {
     let mut body = [0u8; MAX_MESSAGE_BYTES];
     body[..message_body.len()].copy_from_slice(message_body);
     body
+}
+
+fn decode_pda_seeds(payload: &[u8], room_state: &RoomState) -> Result<Vec<Vec<u8>>, ProgramError> {
+    if payload.is_empty() {
+        return Ok(vec![
+            ROOM_PROGRAM_SEED.to_vec(),
+            room_state.room_code.to_vec(),
+            vec![room_state.bump],
+        ]);
+    }
+
+    let mut cursor = 0usize;
+    let seed_count = read_u32(payload, &mut cursor)? as usize;
+    let mut seeds = Vec::with_capacity(seed_count);
+
+    for _ in 0..seed_count {
+        let len = read_u32(payload, &mut cursor)? as usize;
+        let end = cursor.saturating_add(len);
+        let slice = payload
+            .get(cursor..end)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        seeds.push(slice.to_vec());
+        cursor = end;
+    }
+
+    Ok(seeds)
 }
 
 impl RoomState {
@@ -500,19 +627,6 @@ impl RoomState {
         self.messages[MAX_MESSAGES - 1] = message;
     }
 
-    fn append_payment(&mut self, payment: PaymentEventSlot) {
-        if (self.payment_count as usize) < MAX_PAYMENT_EVENTS {
-            self.payments[self.payment_count as usize] = payment;
-            self.payment_count += 1;
-            return;
-        }
-
-        for index in 1..MAX_PAYMENT_EVENTS {
-            self.payments[index - 1] = self.payments[index];
-        }
-        self.payments[MAX_PAYMENT_EVENTS - 1] = payment;
-    }
-
     fn unpack(input: &[u8]) -> Result<Self, ProgramError> {
         if input.len() < ROOM_ACCOUNT_BYTES {
             return Err(ProgramError::InvalidAccountData);
@@ -527,7 +641,6 @@ impl RoomState {
         let participant_count = read_u8(input, &mut cursor)?;
         let next_message_seq = read_u32(input, &mut cursor)?;
         let message_count = read_u16(input, &mut cursor)?;
-        let payment_count = read_u8(input, &mut cursor)?;
         let created_at = read_i64(input, &mut cursor)?;
         let updated_at = read_i64(input, &mut cursor)?;
         let last_active_at = read_i64(input, &mut cursor)?;
@@ -548,15 +661,6 @@ impl RoomState {
             message.body = read_array::<MAX_MESSAGE_BYTES>(input, &mut cursor)?;
         }
 
-        let mut payments = [PaymentEventSlot::default(); MAX_PAYMENT_EVENTS];
-        for payment in payments.iter_mut() {
-            payment.from = read_array::<32>(input, &mut cursor)?;
-            payment.to = read_array::<32>(input, &mut cursor)?;
-            payment.amount_lamports = read_u64(input, &mut cursor)?;
-            payment.created_at = read_i64(input, &mut cursor)?;
-            payment.status = read_u8(input, &mut cursor)?;
-        }
-
         Ok(Self {
             discriminator,
             bump,
@@ -566,13 +670,11 @@ impl RoomState {
             participant_count,
             next_message_seq,
             message_count,
-            payment_count,
             created_at,
             updated_at,
             last_active_at,
             participants,
             messages,
-            payments,
         })
     }
 
@@ -590,7 +692,6 @@ impl RoomState {
         write_u8(output, &mut cursor, self.participant_count)?;
         write_u32(output, &mut cursor, self.next_message_seq)?;
         write_u16(output, &mut cursor, self.message_count)?;
-        write_u8(output, &mut cursor, self.payment_count)?;
         write_i64(output, &mut cursor, self.created_at)?;
         write_i64(output, &mut cursor, self.updated_at)?;
         write_i64(output, &mut cursor, self.last_active_at)?;
@@ -607,14 +708,6 @@ impl RoomState {
             write_u16(output, &mut cursor, message.body_len)?;
             write_u8(output, &mut cursor, message.status)?;
             write_array(output, &mut cursor, &message.body)?;
-        }
-
-        for payment in self.payments.iter() {
-            write_array(output, &mut cursor, &payment.from)?;
-            write_array(output, &mut cursor, &payment.to)?;
-            write_u64(output, &mut cursor, payment.amount_lamports)?;
-            write_i64(output, &mut cursor, payment.created_at)?;
-            write_u8(output, &mut cursor, payment.status)?;
         }
 
         Ok(())

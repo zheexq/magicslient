@@ -1,15 +1,13 @@
 import { PublicKey } from "@solana/web3.js";
-import type { ChatMessage, Participant, PaymentEvent, RoomSnapshot } from "@/types/chat";
+import type { ChatMessage, Participant, RoomSnapshot } from "@/types/chat";
 
 const ROOM_CODE_BYTES = 6;
 const MAX_PARTICIPANTS = 2;
-const MAX_MESSAGES = 40;
-const MAX_MESSAGE_BYTES = 160;
-const MAX_PAYMENTS = 20;
+const MAX_MESSAGES = 12;
+const MAX_MESSAGE_BYTES = 96;
 
 const PARTICIPANT_SLOT_BYTES = 32 + 1 + 8;
 const MESSAGE_SLOT_BYTES = 32 + 8 + 2 + 1 + MAX_MESSAGE_BYTES;
-const PAYMENT_SLOT_BYTES = 32 + 32 + 8 + 8 + 1;
 
 const asciiDecoder = new TextDecoder("ascii");
 const utf8Decoder = new TextDecoder("utf-8");
@@ -38,10 +36,6 @@ function readI64(dataView: DataView, offset: number) {
   return Number(dataView.getBigInt64(offset, true));
 }
 
-function readU64(dataView: DataView, offset: number) {
-  return Number(dataView.getBigUint64(offset, true));
-}
-
 function statusFromByte(value: number): RoomSnapshot["status"] {
   if (value === 1) {
     return "active";
@@ -53,19 +47,6 @@ function statusFromByte(value: number): RoomSnapshot["status"] {
 
   return "waiting";
 }
-
-function paymentStatusFromByte(value: number): PaymentEvent["status"] {
-  if (value === 1) {
-    return "confirmed";
-  }
-
-  if (value === 2) {
-    return "failed";
-  }
-
-  return "pending";
-}
-
 export function decodeRoomAccount(code: string, raw: Buffer | Uint8Array) {
   const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
   const dataView = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -94,9 +75,6 @@ export function decodeRoomAccount(code: string, raw: Buffer | Uint8Array) {
   offset += 4; // next_message_seq
   const messageCount = dataView.getUint16(offset, true);
   offset += 2;
-
-  const paymentCount = bytes[offset];
-  offset += 1;
 
   const createdAt = readI64(dataView, offset) * 1000;
   offset += 8;
@@ -152,33 +130,7 @@ export function decodeRoomAccount(code: string, raw: Buffer | Uint8Array) {
     });
   }
 
-  const payments: PaymentEvent[] = [];
-  for (let index = 0; index < MAX_PAYMENTS; index += 1) {
-    const from = readPublicKey(bytes, offset);
-    offset += 32;
-    const to = readPublicKey(bytes, offset);
-    offset += 32;
-    const amountLamports = readU64(dataView, offset);
-    offset += 8;
-    const createdAtPayment = readI64(dataView, offset) * 1000;
-    offset += 8;
-    const paymentStatus = paymentStatusFromByte(bytes[offset]);
-    offset += 1;
-
-    if (!from || index >= paymentCount) {
-      continue;
-    }
-
-    payments.push({
-      id: `${roomCode}-payment-${index}-${createdAtPayment}`,
-      roomCode,
-      from,
-      to: to ?? creator ?? from,
-      amountSol: amountLamports / 1_000_000_000,
-      createdAt: createdAtPayment,
-      status: paymentStatus,
-    });
-  }
+  const payments: RoomSnapshot["payments"] = [];
 
   return {
     code: roomCode,

@@ -50,6 +50,7 @@ jobs:
         shell: bash
         working-directory: ${{ env.PROGRAM_DIR }}
         run: |
+          cargo update -p blake3 --precise 1.5.5
           cargo-build-sbf
           ls -la target/deploy
 
