@@ -1,0 +1,20 @@
+export type RoomTransportMode = "browser" | "magicblock";
+
+export const appEnv = {
+  solanaRpcUrl: process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? "https://api.devnet.solana.com",
+  magicRouterHttpUrl:
+    process.env.NEXT_PUBLIC_MAGICBLOCK_ROUTER_HTTP_URL ?? "https://devnet-router.magicblock.app",
+  magicRouterWsUrl:
+    process.env.NEXT_PUBLIC_MAGICBLOCK_ROUTER_WS_URL ?? "wss://devnet-router.magicblock.app",
+  magicValidator:
+    process.env.NEXT_PUBLIC_MAGICBLOCK_VALIDATOR ?? "MUS3hc9TCw4cGC12vHNoYcCGzJG1txjgQLZWVoeNHNd",
+  delegationProgramId:
+    process.env.NEXT_PUBLIC_MAGICBLOCK_DELEGATION_PROGRAM_ID ??
+    "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh",
+  roomTransport: (process.env.NEXT_PUBLIC_ROOM_TRANSPORT ?? "browser") as RoomTransportMode,
+  roomProgramId: process.env.NEXT_PUBLIC_ROOM_PROGRAM_ID ?? "",
+};
+
+export function isMagicBlockConfigured() {
+  return Boolean(appEnv.roomProgramId);
+}

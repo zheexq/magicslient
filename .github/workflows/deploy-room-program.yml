@@ -1,0 +1,74 @@
+name: Deploy Room Program
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-devnet:
+    runs-on: ubuntu-latest
+    env:
+      SOLANA_CLI_VERSION: v2.3.13
+      RUST_TOOLCHAIN: 1.85.0
+      PROGRAM_DIR: programs/anonymous-duel-room
+      BUILD_ARTIFACT: programs/anonymous-duel-room/target/deploy/anonymous_duel_room.so
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore Solana Keypair
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.config/solana"
+          printf '%s' '${{ secrets.SOLANA_KEYPAIR }}' | base64 --decode > "$HOME/.config/solana/id.json"
+          chmod 600 "$HOME/.config/solana/id.json"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            ${{ env.PROGRAM_DIR }} -> target
+
+      - name: Install Solana CLI
+        shell: bash
+        run: |
+          curl -4 -sSfL "https://release.anza.xyz/${SOLANA_CLI_VERSION}/install" | sh
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Configure Devnet
+        shell: bash
+        run: |
+          solana config set --url https://api.devnet.solana.com
+          solana address
+          solana balance
+
+      - name: Build Program
+        shell: bash
+        working-directory: ${{ env.PROGRAM_DIR }}
+        run: |
+          cargo-build-sbf
+          ls -la target/deploy
+
+      - name: Deploy Program
+        id: deploy
+        shell: bash
+        run: |
+          DEPLOY_OUTPUT="$(solana program deploy '${BUILD_ARTIFACT}' --output json)"
+          echo "$DEPLOY_OUTPUT"
+          PROGRAM_ID="$(printf '%s' "$DEPLOY_OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin)['programId'])")"
+          echo "program_id=$PROGRAM_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "## Devnet Deploy Complete"
+            echo ""
+            echo "- Program ID: \`${{ steps.deploy.outputs.program_id }}\`"
+            echo "- RPC: \`https://api.devnet.solana.com\`"
+            echo "- Artifact: \`${BUILD_ARTIFACT}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
